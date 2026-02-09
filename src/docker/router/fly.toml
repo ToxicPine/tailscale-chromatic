@@ -1,0 +1,15 @@
+# Chromatic Router - Tailscale Subnet Router
+# This file is used as a template; app name is overridden at deploy time
+
+app = "chromatic-router"
+primary_region = "iad"
+
+[build]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = 512
+
+[[mounts]]
+  source = "tailscale_state"
+  destination = "/var/lib/tailscale"
