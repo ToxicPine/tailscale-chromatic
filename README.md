@@ -19,13 +19,13 @@ All three can live on the same machine or anywhere on your tailnet. Browsers sle
 
 ```bash
 # Setup (one-time)
-nix run github:ToxicPine/chromatic -- setup
+nix run github:ToxicPine/tailscale-chromatic -- setup
 
 # Create a browser
-nix run github:ToxicPine/chromatic -- create my-browser
+nix run github:ToxicPine/tailscale-chromatic -- create my-browser
 
 # Configure MCP to use it
-nix run github:ToxicPine/chromatic -- mcp my-browser
+nix run github:ToxicPine/tailscale-chromatic -- mcp my-browser
 ```
 
 The `mcp` command finds your `.mcp.json` and adds a Playwright server pointing at your browser's CDP endpoint. Your AI agent can now browse the web through a real Chrome instance.
