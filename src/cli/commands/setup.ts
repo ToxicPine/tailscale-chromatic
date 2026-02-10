@@ -42,8 +42,9 @@ import {
 
 const setup = async (argv: string[]): Promise<void> => {
   const args = parseArgs(argv, {
-    string: ["tags", "org", "region"],
-    boolean: ["help"],
+    string: ["tags", "org", "region", "api-key"],
+    boolean: ["help", "yes"],
+    alias: { y: "yes" },
   });
 
   if (args.help) {
@@ -54,9 +55,11 @@ ${bold("USAGE")}
   chromatic setup [options]
 
 ${bold("OPTIONS")}
-  --tags <tags>     Tailscale ACL tags for the router (comma-separated)
-  --org <org>       Fly.io organization slug
-  --region <region> Fly.io region (default: iad)
+  --tags <tags>       Tailscale ACL tags for the router (comma-separated)
+  --org <org>         Fly.io organization slug
+  --region <region>   Fly.io region (default: iad)
+  --api-key <key>     Tailscale API access token (tskey-api-...)
+  -y, --yes           Skip confirmation prompts
 
 ${bold("DESCRIPTION")}
   Sets up Chromatic by:
@@ -69,6 +72,7 @@ ${bold("EXAMPLES")}
   chromatic setup
   chromatic setup --tags tag:browsers,tag:automation
   chromatic setup --org my-org --region sea
+  chromatic setup --org my-org --api-key tskey-api-... --yes
 `);
     return;
   }
@@ -86,12 +90,14 @@ ${bold("EXAMPLES")}
     console.log(dim(`  Router: ${existingConfig.router.appName}`));
     console.log();
 
-    const answer = await prompt("Reconfigure? [y/N] ");
-    if (answer.toLowerCase() !== "y") {
-      console.log("Cancelled.");
-      return;
+    if (!args.yes) {
+      const answer = await prompt("Reconfigure? [y/N] ");
+      if (answer.toLowerCase() !== "y") {
+        console.log("Cancelled.");
+        return;
+      }
+      console.log();
     }
-    console.log();
   }
 
   // ==========================================================================
@@ -155,14 +161,17 @@ ${bold("EXAMPLES")}
   console.log(bold("Step 2: Tailscale Configuration"));
   console.log();
 
-  console.log(dim("Chromatic needs an API access token (not an auth key) to manage your tailnet."));
-  console.log(dim("Create one at: https://login.tailscale.com/admin/settings/keys"));
-  console.log(dim("Select 'Generate API access token' with at least 90 days expiry."));
-  console.log();
-
-  const apiKey = await readSecret("API access token (tskey-api-...): ");
+  let apiKey = args["api-key"];
   if (!apiKey) {
-    return die("Tailscale API Access Token Required");
+    console.log(dim("Chromatic needs an API access token (not an auth key) to manage your tailnet."));
+    console.log(dim("Create one at: https://login.tailscale.com/admin/settings/keys"));
+    console.log(dim("Select 'Generate API access token' with at least 90 days expiry."));
+    console.log();
+
+    apiKey = await readSecret("API access token (tskey-api-...): ");
+    if (!apiKey) {
+      return die("Tailscale API Access Token Required");
+    }
   }
 
   if (!apiKey.startsWith("tskey-api-")) {
@@ -325,6 +334,6 @@ ${bold("EXAMPLES")}
 registerCommand({
   name: "setup",
   description: "One-time setup: connect Fly.io and Tailscale, deploy router",
-  usage: "chromatic setup [--tags <tags>] [--org <org>] [--region <region>]",
+  usage: "chromatic setup [--org <org>] [--region <region>] [--api-key <key>] [--yes]",
   run: setup,
 });

@@ -45,8 +45,8 @@ const MCP_FILENAME = ".mcp.json";
 const mcp = async (argv: string[]): Promise<void> => {
   const args = parseArgs(argv, {
     string: ["name"],
-    boolean: ["help", "create", "dry-run"],
-    alias: { n: "name" },
+    boolean: ["help", "create", "dry-run", "yes"],
+    alias: { n: "name", y: "yes" },
   });
 
   if (args.help) {
@@ -60,6 +60,7 @@ ${bold("OPTIONS")}
   -n, --name <name>   Server name in config (default: chromatic-<instance>)
   --create            Create ${MCP_FILENAME} in current directory if not found
   --dry-run           Preview changes without writing
+  -y, --yes           Skip confirmation prompts
 
 ${bold("DESCRIPTION")}
   Searches parent directories for ${MCP_FILENAME}, then adds a Playwright
@@ -69,7 +70,7 @@ ${bold("EXAMPLES")}
   chromatic mcp my-browser
   chromatic mcp scrapers --name browser-pool
   chromatic mcp my-browser --dry-run
-  chromatic mcp my-browser --create
+  chromatic mcp my-browser --create --yes
 `);
     return;
   }
@@ -156,10 +157,12 @@ ${bold("EXAMPLES")}
     console.log();
     statusWarn(`Server '${serverName}' Already Exists`);
 
-    const overwrite = await confirm("Overwrite?");
-    if (!overwrite) {
-      console.log("Cancelled.");
-      return;
+    if (!args.yes) {
+      const overwrite = await confirm("Overwrite?");
+      if (!overwrite) {
+        console.log("Cancelled.");
+        return;
+      }
     }
   }
 
@@ -184,10 +187,12 @@ ${bold("EXAMPLES")}
   }
 
   // Confirm
-  const shouldWrite = await confirm("Write Changes?");
-  if (!shouldWrite) {
-    console.log("Cancelled.");
-    return;
+  if (!args.yes) {
+    const shouldWrite = await confirm("Write Changes?");
+    if (!shouldWrite) {
+      console.log("Cancelled.");
+      return;
+    }
   }
 
   // Write
@@ -211,6 +216,6 @@ ${bold("EXAMPLES")}
 registerCommand({
   name: "mcp",
   description: "Add a browser instance to your .mcp.json for AI agents",
-  usage: "chromatic mcp <instance> [--name NAME] [--create] [--dry-run]",
+  usage: "chromatic mcp <instance> [--name NAME] [--create] [--yes]",
   run: mcp,
 });
