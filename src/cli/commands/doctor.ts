@@ -4,11 +4,10 @@
 
 import { parseArgs } from "@std/cli";
 import {
-  statusOk,
-  statusErr,
   bold,
   dim,
 } from "../../../lib/cli.ts";
+import { createOutput } from "../../../lib/output.ts";
 import { runCommand } from "../../../lib/command.ts";
 import { registerCommand } from "../mod.ts";
 import { loadConfig } from "../../schemas/config.ts";
@@ -39,7 +38,7 @@ interface CheckResult {
 
 const doctor = async (argv: string[]): Promise<void> => {
   const args = parseArgs(argv, {
-    boolean: ["help"],
+    boolean: ["help", "json"],
   });
 
   if (args.help) {
@@ -47,7 +46,10 @@ const doctor = async (argv: string[]): Promise<void> => {
 ${bold("chromatic doctor")} - Verify Environment and Infrastructure Health
 
 ${bold("USAGE")}
-  chromatic doctor
+  chromatic doctor [options]
+
+${bold("OPTIONS")}
+  --json    Output as JSON
 
 ${bold("DESCRIPTION")}
   Runs a series of checks to verify that your local environment
@@ -64,9 +66,11 @@ ${bold("CHECKS")}
     return;
   }
 
-  console.log();
-  console.log(bold("Chromatic Doctor"));
-  console.log();
+  const out = createOutput<{ ok: boolean; checks: { name: string; ok: boolean; hint?: string }[] }>(
+    args.json
+  );
+
+  out.blank().header("Chromatic Doctor").blank();
 
   const config = await loadConfig();
 
@@ -148,31 +152,35 @@ ${bold("CHECKS")}
     },
   ];
 
-  let issues = 0;
+  const results: { name: string; ok: boolean; hint?: string }[] = [];
 
   for (const check of checks) {
     const result = await check.run();
+    results.push({ name: check.name, ok: result.ok, hint: result.hint });
 
     if (result.ok) {
-      statusOk(check.name);
+      out.ok(check.name);
     } else {
-      statusErr(check.name);
+      out.err(check.name);
       if (result.hint) {
-        console.log(dim(`    ${result.hint}`));
+        out.dim(`    ${result.hint}`);
       }
-      issues++;
     }
   }
 
-  console.log();
+  const issues = results.filter((r) => !r.ok).length;
 
+  out.merge({ ok: issues === 0, checks: results });
+
+  out.blank();
   if (issues === 0) {
-    console.log("All Checks Passed.");
+    out.text("All Checks Passed.");
   } else {
-    console.log(`${issues} Issue${issues > 1 ? "s" : ""} Found.`);
+    out.text(`${issues} Issue${issues > 1 ? "s" : ""} Found.`);
   }
+  out.blank();
 
-  console.log();
+  out.print();
 };
 
 // =============================================================================

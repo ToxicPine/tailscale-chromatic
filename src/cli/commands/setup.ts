@@ -5,7 +5,6 @@
 import { parseArgs } from "@std/cli";
 import {
   statusOk,
-  statusErr,
   statusInfo,
   statusWarn,
   bold,
@@ -17,6 +16,7 @@ import {
   Spinner,
   die,
 } from "../../../lib/cli.ts";
+import { createOutput } from "../../../lib/output.ts";
 import { runCommand } from "../../../lib/command.ts";
 import { registerCommand } from "../mod.ts";
 import {
@@ -43,7 +43,7 @@ import {
 const setup = async (argv: string[]): Promise<void> => {
   const args = parseArgs(argv, {
     string: ["tags", "org", "region", "api-key"],
-    boolean: ["help", "yes"],
+    boolean: ["help", "yes", "json"],
     alias: { y: "yes" },
   });
 
@@ -60,6 +60,7 @@ ${bold("OPTIONS")}
   --region <region>   Fly.io region (default: iad)
   --api-key <key>     Tailscale API access token (tskey-api-...)
   -y, --yes           Skip confirmation prompts
+  --json              Output as JSON
 
 ${bold("DESCRIPTION")}
   Sets up Chromatic by:
@@ -72,10 +73,14 @@ ${bold("EXAMPLES")}
   chromatic setup
   chromatic setup --tags tag:browsers,tag:automation
   chromatic setup --org my-org --region sea
-  chromatic setup --org my-org --api-key tskey-api-... --yes
+  chromatic setup --org my-org --api-key tskey-api-... --yes --json
 `);
     return;
   }
+
+  const log = (...messages: string[]) => {
+    if (!args.json) console.log(...messages);
+  };
 
   console.log();
   console.log(bold("=".repeat(50)));
@@ -310,21 +315,30 @@ ${bold("EXAMPLES")}
   };
 
   await saveConfig(config);
-  statusOk("Configuration Saved");
 
-  // ==========================================================================
-  // Done!
-  // ==========================================================================
+  const out = createOutput(args.json, {
+    fly: {
+      org: flyConfig.org,
+      region: flyConfig.region,
+    },
+    router: {
+      appName: routerConfig.appName,
+      tailscaleIp: routerConfig.tailscaleIp,
+    },
+  });
 
-  console.log();
-  console.log(bold("=".repeat(50)));
-  console.log(bold("  Setup Complete!"));
-  console.log(bold("=".repeat(50)));
-  console.log();
-  console.log("Chromatic is ready. Create your first instance:");
-  console.log();
-  console.log(dim("  chromatic create my-browser"));
-  console.log();
+  out.ok("Configuration Saved")
+    .blank()
+    .header("=".repeat(50))
+    .header("  Setup Complete!")
+    .header("=".repeat(50))
+    .blank()
+    .text("Chromatic is ready.")
+    .blank()
+    .dim("  chromatic create my-browser")
+    .blank();
+
+  out.print();
 };
 
 // =============================================================================

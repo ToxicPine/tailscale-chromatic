@@ -4,6 +4,7 @@
 
 import { parseArgs } from "@std/cli";
 import { bold, dim, die, green, yellow, red, cyan } from "../../../lib/cli.ts";
+import { createOutput } from "../../../lib/output.ts";
 import { registerCommand } from "../mod.ts";
 import { requireRouter } from "../../schemas/config.ts";
 import {
@@ -51,13 +52,17 @@ const status = async (argv: string[]): Promise<void> => {
 
   if (args.help) {
     console.log(`
-${bold("chromatic status")} - Show Detailed Instance Status
+${bold("chromatic status")} - Show Browser Group Status
 
 ${bold("USAGE")}
   chromatic status <name> [options]
 
 ${bold("OPTIONS")}
   --json    Output as JSON
+
+${bold("DESCRIPTION")}
+  Shows all machines in a browser group with their state and private IPs.
+  Use per-machine IPs for sticky sessions to a specific Chrome instance.
 
 ${bold("EXAMPLES")}
   chromatic status my-browser
@@ -93,44 +98,39 @@ ${bold("EXAMPLES")}
     region: config.fly.region,
   };
 
-  if (args.json) {
-    console.log(JSON.stringify(instance, null, 2));
-    return;
-  }
+  const out = createOutput<Instance>(args.json, instance);
 
   const summary = getInstanceStateSummary(instance);
   const sizeSummary = getMachineSizeSummary(instance);
   const endpoint = getCdpEndpoint(instance.flyAppName);
 
-  console.log();
-  console.log(bold(`Instance: ${name}`));
-  console.log(`App:      ${instance.flyAppName}`);
-  console.log(`Region:   ${instance.region ?? config.fly.region}`);
-  console.log(`Endpoint: ${endpoint}`);
-  console.log();
-  console.log(`Machines: ${summary.total} (${formatMachineSizeSummary(sizeSummary)})`);
+  out.blank()
+    .header(`Instance: ${name}`)
+    .text(`App:      ${instance.flyAppName}`)
+    .text(`Region:   ${instance.region ?? config.fly.region}`)
+    .text(`Endpoint: ${endpoint}`)
+    .blank()
+    .text(`Machines: ${summary.total} (${formatMachineSizeSummary(sizeSummary)})`);
 
   if (machines.length > 0) {
-    console.log();
+    out.blank();
 
     const idWidth = 12;
     const sizeWidth = 16;
     const stateWidth = 10;
 
-    console.log(
-      dim(
-        "ID".padEnd(idWidth) +
-        "SIZE".padEnd(sizeWidth) +
-        "STATE".padEnd(stateWidth) +
-        "PRIVATE IP"
-      )
+    out.dim(
+      "ID".padEnd(idWidth) +
+      "SIZE".padEnd(sizeWidth) +
+      "STATE".padEnd(stateWidth) +
+      "PRIVATE IP"
     );
 
     for (const machine of machines) {
       const id = machine.id.slice(0, 10);
       const ip = machine.privateIp ?? "-";
 
-      console.log(
+      out.text(
         id.padEnd(idWidth) +
         machine.size.padEnd(sizeWidth) +
         stateColor(machine.state).padEnd(stateWidth + 9) +
@@ -139,7 +139,7 @@ ${bold("EXAMPLES")}
     }
   }
 
-  console.log();
+  out.blank();
 
   // Fetch live WebSocket URL from a running machine
   const runningMachine = machines.find((m) => m.state === "running" && m.privateIp);
@@ -150,20 +150,22 @@ ${bold("EXAMPLES")}
         cdpInfo.webSocketDebuggerUrl,
         instance.flyAppName
       );
-      console.log(bold("Connect with Puppeteer:"));
-      console.log(dim(`  const browser = await puppeteer.connect({`));
-      console.log(dim(`    browserWSEndpoint: '${wsUrl}'`));
-      console.log(dim(`  });`));
-      console.log();
+      out.header("Connect with Puppeteer:")
+        .dim(`  const browser = await puppeteer.connect({`)
+        .dim(`    browserWSEndpoint: '${wsUrl}'`)
+        .dim(`  });`)
+        .blank();
     }
   } else if (machines.some((m) => m.privateIp)) {
-    console.log(dim("Tip: Connect to a specific machine:"));
+    out.dim("Tip: Connect to a specific machine:");
     const machineWithIp = machines.find((m) => m.privateIp);
     if (machineWithIp?.privateIp) {
-      console.log(dim(`  ${getCdpMachineEndpoint(machineWithIp.privateIp)}`));
+      out.dim(`  ${getCdpMachineEndpoint(machineWithIp.privateIp)}`);
     }
-    console.log();
+    out.blank();
   }
+
+  out.print();
 };
 
 // =============================================================================
@@ -172,7 +174,7 @@ ${bold("EXAMPLES")}
 
 registerCommand({
   name: "status",
-  description: "Show browser instance details including machines and endpoints",
+  description: "Show browser group details and per-machine endpoints",
   usage: "chromatic status <name> [--json]",
   run: status,
 });

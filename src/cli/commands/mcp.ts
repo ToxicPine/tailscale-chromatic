@@ -4,15 +4,13 @@
 
 import { parseArgs } from "@std/cli";
 import {
-  statusOk,
-  statusInfo,
-  statusWarn,
   bold,
   dim,
   cyan,
   confirm,
   die,
 } from "../../../lib/cli.ts";
+import { createOutput } from "../../../lib/output.ts";
 import { findFileUp, getRelativePath } from "../../../lib/find.ts";
 import { registerCommand } from "../mod.ts";
 import { requireRouter } from "../../schemas/config.ts";
@@ -45,7 +43,7 @@ const MCP_FILENAME = ".mcp.json";
 const mcp = async (argv: string[]): Promise<void> => {
   const args = parseArgs(argv, {
     string: ["name"],
-    boolean: ["help", "create", "dry-run", "yes"],
+    boolean: ["help", "create", "dry-run", "yes", "json"],
     alias: { n: "name", y: "yes" },
   });
 
@@ -54,23 +52,26 @@ const mcp = async (argv: string[]): Promise<void> => {
 ${bold("chromatic mcp")} - Configure MCP with CDP Endpoint
 
 ${bold("USAGE")}
-  chromatic mcp <instance> [options]
+  chromatic mcp <name> [options]
 
 ${bold("OPTIONS")}
-  -n, --name <name>   Server name in config (default: chromatic-<instance>)
-  --create            Create ${MCP_FILENAME} in current directory if not found
-  --dry-run           Preview changes without writing
-  -y, --yes           Skip confirmation prompts
+  -n, --name <server>   MCP server name in config (default: chromatic-<name>)
+  --create              Create ${MCP_FILENAME} in current directory if not found
+  --dry-run             Preview changes without writing
+  -y, --yes             Skip confirmation prompts
+  --json                Output as JSON
 
 ${bold("DESCRIPTION")}
-  Searches parent directories for ${MCP_FILENAME}, then adds a Playwright
-  MCP server configured with the CDP endpoint for the specified instance.
+  Adds a Playwright MCP server to your ${MCP_FILENAME}, configured with the
+  CDP endpoint for the specified browser group. If the group has multiple
+  machines, each MCP connection is routed to one of them (load-balanced).
+  This is stateless: each browse session is independent.
 
 ${bold("EXAMPLES")}
   chromatic mcp my-browser
   chromatic mcp scrapers --name browser-pool
   chromatic mcp my-browser --dry-run
-  chromatic mcp my-browser --create --yes
+  chromatic mcp my-browser --create --yes --json
 `);
     return;
   }
@@ -97,10 +98,13 @@ ${bold("EXAMPLES")}
   const cdpEndpoint = getCdpEndpoint(app.Name);
   const serverName = args.name ?? `chromatic-${instanceName}`;
 
-  console.log();
-  statusInfo(`Instance: ${instanceName}`);
-  statusInfo(`Endpoint: ${cdpEndpoint}`);
-  console.log();
+  // deno-lint-ignore no-explicit-any
+  const out = createOutput<any>(args.json);
+
+  out.blank()
+    .info(`Instance: ${instanceName}`)
+    .info(`Endpoint: ${cdpEndpoint}`)
+    .blank();
 
   // Find .mcp.json in parent directories
   const foundPath = await findFileUp(MCP_FILENAME);
@@ -111,18 +115,20 @@ ${bold("EXAMPLES")}
 
   if (!foundPath) {
     if (!args.create) {
-      console.log(dim(`No ${MCP_FILENAME} Found in Parent Directories`));
-      console.log();
-      console.log(`Use ${cyan("--create")} to create one in the current directory.`);
+      out.dim(`No ${MCP_FILENAME} Found in Parent Directories`)
+        .blank()
+        .text(`Use ${cyan("--create")} to create one in the current directory.`);
+      out.merge({ error: `No ${MCP_FILENAME} found` });
+      out.print();
       return;
     }
 
     targetPath = `${Deno.cwd()}/${MCP_FILENAME}`;
     isNewFile = true;
-    statusInfo(`Creating ${MCP_FILENAME}`);
+    out.info(`Creating ${MCP_FILENAME}`);
   } else {
     targetPath = foundPath;
-    statusOk(`Found: ${getRelativePath(targetPath)}`);
+    out.ok(`Found: ${getRelativePath(targetPath)}`);
   }
 
   // Parse existing config
@@ -148,16 +154,14 @@ ${bold("EXAMPLES")}
   // Show existing servers
   const existingServers = listServers(existingConfig);
   if (existingServers.length > 0) {
-    console.log();
-    console.log(`Existing Servers: ${existingServers.map((s) => cyan(s)).join(", ")}`);
+    out.blank().text(`Existing Servers: ${existingServers.map((s) => cyan(s)).join(", ")}`);
   }
 
   // Check for name conflict
   if (hasServer(existingConfig, serverName)) {
-    console.log();
-    statusWarn(`Server '${serverName}' Already Exists`);
+    out.blank().warn(`Server '${serverName}' Already Exists`);
 
-    if (!args.yes) {
+    if (!args.yes && !out.isJson()) {
       const overwrite = await confirm("Overwrite?");
       if (!overwrite) {
         console.log("Cancelled.");
@@ -170,24 +174,28 @@ ${bold("EXAMPLES")}
   const newServer = createPlaywrightMcpServer(cdpEndpoint);
   const newConfig = mergeMcpConfig(existingConfig, serverName, newServer);
 
-  // Preview
-  console.log();
-  console.log(bold("Adding Server:"));
-  console.log();
-  const formatted = formatServerConfig(serverName, newServer);
-  for (const line of formatted.split("\n")) {
-    console.log(dim("  " + line));
-  }
-  console.log();
-
-  // Dry run exits here
+  // Dry run or preview
   if (args["dry-run"]) {
-    statusInfo("Dry Run Complete");
+    out.blank().header("Adding Server:").blank();
+    const formatted = formatServerConfig(serverName, newServer);
+    for (const line of formatted.split("\n")) {
+      out.dim("  " + line);
+    }
+    out.blank().info("Dry Run Complete");
+    out.merge({ dryRun: true, serverName, server: newServer, targetPath });
+    out.print();
     return;
   }
 
+  out.blank().header("Adding Server:").blank();
+  const formatted = formatServerConfig(serverName, newServer);
+  for (const line of formatted.split("\n")) {
+    out.dim("  " + line);
+  }
+  out.blank();
+
   // Confirm
-  if (!args.yes) {
+  if (!args.yes && !out.isJson()) {
     const shouldWrite = await confirm("Write Changes?");
     if (!shouldWrite) {
       console.log("Cancelled.");
@@ -205,8 +213,9 @@ ${bold("EXAMPLES")}
     throw error;
   }
 
-  console.log();
-  statusOk(`Added ${cyan(serverName)} to ${getRelativePath(targetPath)}`);
+  out.blank().ok(`Added ${cyan(serverName)} to ${getRelativePath(targetPath)}`);
+  out.merge({ written: true, serverName, server: newServer, targetPath });
+  out.print();
 };
 
 // =============================================================================
@@ -215,7 +224,7 @@ ${bold("EXAMPLES")}
 
 registerCommand({
   name: "mcp",
-  description: "Add a browser instance to your .mcp.json for AI agents",
-  usage: "chromatic mcp <instance> [--name NAME] [--create] [--yes]",
+  description: "Add a browser to your .mcp.json for AI agents",
+  usage: "chromatic mcp <name> [--name SERVER] [--create] [--yes]",
   run: mcp,
 });

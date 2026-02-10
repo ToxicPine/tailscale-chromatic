@@ -4,13 +4,13 @@
 
 import { parseArgs } from "@std/cli";
 import {
-  statusOk,
   bold,
   confirm,
   die,
   red,
   Spinner,
 } from "../../../lib/cli.ts";
+import { createOutput } from "../../../lib/output.ts";
 import { registerCommand } from "../mod.ts";
 import { requireRouter } from "../../schemas/config.ts";
 import { getInstanceStateSummary } from "../../schemas/instance.ts";
@@ -26,7 +26,7 @@ import {
 
 const destroy = async (argv: string[]): Promise<void> => {
   const args = parseArgs(argv, {
-    boolean: ["help", "force", "yes"],
+    boolean: ["help", "force", "yes", "json"],
     alias: { f: "force", y: "yes" },
   });
 
@@ -40,10 +40,12 @@ ${bold("USAGE")}
 ${bold("OPTIONS")}
   -f, --force   Destroy without confirmation
   -y, --yes     Same as --force
+  --json        Output as JSON
 
 ${bold("EXAMPLES")}
   chromatic destroy my-browser
   chromatic destroy scrapers --force
+  chromatic destroy scrapers --yes --json
 `);
     return;
   }
@@ -73,13 +75,20 @@ ${bold("EXAMPLES")}
     machines,
   });
 
-  console.log();
-  console.log(bold(`Instance: ${name}`));
-  console.log(`App:      ${app.Name}`);
-  console.log(`Machines: ${summary.total}`);
-  console.log();
+  const out = createOutput(args.json, {
+    destroyed: true,
+    name,
+    flyAppName: app.Name,
+    machinesDestroyed: summary.total,
+  });
 
-  if (!args.force && !args.yes) {
+  out.blank()
+    .header(`Instance: ${name}`)
+    .text(`App:      ${app.Name}`)
+    .text(`Machines: ${summary.total}`)
+    .blank();
+
+  if (!args.force && !args.yes && !out.isJson()) {
     console.log(red("This Will Permanently Delete the Instance and All Machines"));
     console.log();
 
@@ -92,14 +101,12 @@ ${bold("EXAMPLES")}
   }
 
   const spinner = new Spinner();
-  spinner.start(`Destroying ${name}`);
-
+  if (!out.isJson()) spinner.start(`Destroying ${name}`);
   await fly.deleteApp(app.Name);
+  if (!out.isJson()) spinner.success(`Destroyed ${name}`);
 
-  spinner.success(`Destroyed ${name}`);
-
-  console.log();
-  statusOk("Instance Destroyed");
+  out.blank().ok("Instance Destroyed");
+  out.print();
 };
 
 // =============================================================================
@@ -108,7 +115,7 @@ ${bold("EXAMPLES")}
 
 registerCommand({
   name: "destroy",
-  description: "Delete a browser instance and all its machines",
+  description: "Delete a browser group and all its machines",
   usage: "chromatic destroy <name> [--force]",
   run: destroy,
 });

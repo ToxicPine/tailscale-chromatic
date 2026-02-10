@@ -4,6 +4,7 @@
 
 import { parseArgs } from "@std/cli";
 import { bold, dim } from "../../../lib/cli.ts";
+import { createOutput } from "../../../lib/output.ts";
 import { registerCommand } from "../mod.ts";
 import { requireRouter } from "../../schemas/config.ts";
 import {
@@ -50,11 +51,15 @@ ${bold("EXAMPLES")}
   const apps = await fly.listApps(config.fly.org);
   const cdpApps = apps.filter((app) => isCdpApp(app.Name));
 
+  const out = createOutput<{ instances: Instance[] }>(args.json);
+
   if (cdpApps.length === 0) {
-    console.log();
-    console.log(dim("No CDP Instances Found"));
-    console.log(dim("Create one with: chromatic create <name>"));
-    console.log();
+    out.merge({ instances: [] });
+    out.blank()
+      .dim("No Browser Groups Found")
+      .dim("Create one with: chromatic create <name>")
+      .blank();
+    out.print();
     return;
   }
 
@@ -71,24 +76,18 @@ ${bold("EXAMPLES")}
     });
   }
 
-  if (args.json) {
-    console.log(JSON.stringify(instances, null, 2));
-    return;
-  }
-
-  console.log();
+  out.merge({ instances });
+  out.blank();
 
   const nameWidth = 20;
   const machinesWidth = 10;
   const stateWidth = 20;
 
-  console.log(
-    bold(
-      "INSTANCE".padEnd(nameWidth) +
-      "MACHINES".padEnd(machinesWidth) +
-      "STATE".padEnd(stateWidth) +
-      "ENDPOINT"
-    )
+  out.header(
+    "INSTANCE".padEnd(nameWidth) +
+    "MACHINES".padEnd(machinesWidth) +
+    "STATE".padEnd(stateWidth) +
+    "ENDPOINT"
   );
 
   for (const instance of instances) {
@@ -96,7 +95,7 @@ ${bold("EXAMPLES")}
     const stateStr = formatInstanceState(summary);
     const endpoint = getCdpEndpoint(instance.flyAppName);
 
-    console.log(
+    out.text(
       instance.name.padEnd(nameWidth) +
       String(summary.total).padEnd(machinesWidth) +
       stateStr.padEnd(stateWidth) +
@@ -104,7 +103,8 @@ ${bold("EXAMPLES")}
     );
   }
 
-  console.log();
+  out.blank();
+  out.print();
 };
 
 // =============================================================================
@@ -113,7 +113,7 @@ ${bold("EXAMPLES")}
 
 registerCommand({
   name: "list",
-  description: "List all browser instances and their status",
+  description: "List all browser groups and their status",
   usage: "chromatic list [--json]",
   run: list,
 });

@@ -4,14 +4,13 @@
 
 import { parseArgs } from "@std/cli";
 import {
-  statusOk,
-  statusInfo,
   bold,
   dim,
   randomId,
   Spinner,
   die,
 } from "../../../lib/cli.ts";
+import { createOutput } from "../../../lib/output.ts";
 import { registerCommand } from "../mod.ts";
 import { requireRouter, MachineSizeEnum, type MachineSize } from "../../schemas/config.ts";
 import {
@@ -29,30 +28,36 @@ import { createFlyProvider, getCdpAppName, isCdpApp } from "../../providers/fly.
 const create = async (argv: string[]): Promise<void> => {
   const args = parseArgs(argv, {
     string: ["count", "size", "region"],
-    boolean: ["help"],
+    boolean: ["help", "json"],
   });
 
   if (args.help) {
     console.log(`
-${bold("chromatic create")} - Create a New CDP Instance
+${bold("chromatic create")} - Create a Browser Group
 
 ${bold("USAGE")}
   chromatic create <name> [options]
 
 ${bold("OPTIONS")}
-  --count <n>     Number of machines (default: 1)
+  --count <n>     Number of machines in the group (default: 1)
   --size <size>   Machine size (default: shared-cpu-1x)
   --region <reg>  Fly.io region (default: from config)
+  --json          Output as JSON
 
 ${bold("SIZES")}
   shared-cpu-1x   1 CPU, 1GB RAM
   shared-cpu-2x   2 CPU, 2GB RAM
   shared-cpu-4x   4 CPU, 4GB RAM
 
+${bold("DESCRIPTION")}
+  Creates a browser group with one or more machines, each running Chrome.
+  Connections to the group's CDP endpoint are load-balanced across machines.
+  Use 'chromatic scale' to add or remove machines later.
+
 ${bold("EXAMPLES")}
   chromatic create my-browser
   chromatic create scrapers --count 3
-  chromatic create heavy --size shared-cpu-4x
+  chromatic create heavy --size shared-cpu-4x --json
 `);
     return;
   }
@@ -86,13 +91,21 @@ ${bold("EXAMPLES")}
 
   const region = args.region ?? config.fly.region;
 
-  console.log();
-  console.log(bold("Creating CDP Instance"));
-  console.log();
-  statusInfo(`Name: ${name}`);
-  statusInfo(`Machines: ${count}x ${size}`);
-  statusInfo(`Region: ${region}`);
-  console.log();
+  // Create output handler - methods print immediately in human mode, no-op in JSON mode
+  const out = createOutput<{
+    name: string;
+    flyAppName: string;
+    endpoint: string;
+    machines: { id: string; state: string; size: string; region: string; privateIp?: string }[];
+  }>(args.json);
+
+  out.blank()
+    .header("Creating CDP Instance")
+    .blank()
+    .info(`Name: ${name}`)
+    .info(`Machines: ${count}x ${size}`)
+    .info(`Region: ${region}`)
+    .blank();
 
   // Check for existing instance
   const apps = await fly.listApps(config.fly.org);
@@ -109,22 +122,20 @@ ${bold("EXAMPLES")}
   const appName = getCdpAppName(name, randomId(4));
 
   const spinner = new Spinner();
-  spinner.start(`Creating App: ${appName}`);
+  if (!out.isJson()) spinner.start(`Creating App: ${appName}`);
   await fly.createApp(appName, config.fly.org);
-  spinner.success(`Created App: ${appName}`);
+  if (!out.isJson()) spinner.success(`Created App: ${appName}`);
 
   // Deploy CDP image (creates first machine)
   const dockerDir = new URL("../../docker/cdp", import.meta.url).pathname;
 
-  console.log();
-  console.log(dim("Deploying CDP Image..."));
+  out.blank().dim("Deploying CDP Image...");
   await fly.deploy(appName, dockerDir, { region });
-  statusOk("CDP Image Deployed");
+  out.ok("CDP Image Deployed");
 
   // Create additional machines if count > 1 (deploy already created 1)
   if (count > 1) {
-    console.log();
-    console.log(dim(`Creating ${count - 1} Additional Machine(s)...`));
+    out.blank().dim(`Creating ${count - 1} Additional Machine(s)...`);
 
     for (let i = 1; i < count; i++) {
       const machine = await fly.createMachine(appName, {
@@ -132,7 +143,7 @@ ${bold("EXAMPLES")}
         region,
         autoStopSeconds: config.defaults.autoStopSeconds,
       });
-      statusOk(`Created Machine: ${machine.id.slice(0, 8)}`);
+      out.ok(`Created Machine: ${machine.id.slice(0, 8)}`);
     }
   }
 
@@ -151,19 +162,34 @@ ${bold("EXAMPLES")}
     }
   }
 
-  // Display result
-  console.log();
-  console.log(bold("=".repeat(50)));
-  console.log(bold(`  Instance Created: ${name}`));
-  console.log(bold("=".repeat(50)));
-  console.log();
-  console.log(`CDP Endpoint: ${bold(wsEndpoint)}`);
-  console.log();
-  console.log(dim("Connect with Puppeteer:"));
-  console.log(dim(`  const browser = await puppeteer.connect({`));
-  console.log(dim(`    browserWSEndpoint: '${wsEndpoint}'`));
-  console.log(dim(`  });`));
-  console.log();
+  // Set final data for JSON output
+  out.merge({
+    name,
+    flyAppName: appName,
+    endpoint: wsEndpoint,
+    machines: machines.map((m) => ({
+      id: m.id,
+      state: m.state,
+      size: m.size,
+      region: m.region,
+      privateIp: m.privateIp,
+    })),
+  });
+
+  out.blank()
+    .header("=".repeat(50))
+    .header(`  Instance Created: ${name}`)
+    .header("=".repeat(50))
+    .blank()
+    .text(`CDP Endpoint: ${bold(wsEndpoint)}`)
+    .blank()
+    .dim("Connect with Puppeteer:")
+    .dim(`  const browser = await puppeteer.connect({`)
+    .dim(`    browserWSEndpoint: '${wsEndpoint}'`)
+    .dim(`  });`)
+    .blank();
+
+  out.print();
 };
 
 // =============================================================================
@@ -172,7 +198,7 @@ ${bold("EXAMPLES")}
 
 registerCommand({
   name: "create",
-  description: "Create a new remote browser instance on Fly.io",
-  usage: "chromatic create <name> [--count N] [--size SIZE]",
+  description: "Create a browser group with one or more machines",
+  usage: "chromatic create <name> [--count N] [--size SIZE] [--json]",
   run: create,
 });

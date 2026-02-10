@@ -6,7 +6,6 @@ import { parseArgs } from "@std/cli";
 import {
   statusOk,
   statusInfo,
-  statusWarn,
   bold,
   dim,
   green,
@@ -16,6 +15,7 @@ import {
   Spinner,
   die,
 } from "../../../lib/cli.ts";
+import { createOutput } from "../../../lib/output.ts";
 import { registerCommand } from "../mod.ts";
 import {
   loadConfig,
@@ -31,7 +31,7 @@ import { createTailscaleProvider, waitForDevice } from "../../providers/tailscal
 
 const router = async (argv: string[]): Promise<void> => {
   const args = parseArgs(argv, {
-    boolean: ["help", "yes"],
+    boolean: ["help", "yes", "json"],
     alias: { y: "yes" },
   });
 
@@ -52,9 +52,11 @@ ${bold("SUBCOMMANDS")}
 
 ${bold("OPTIONS")}
   -y, --yes   Skip confirmation prompts
+  --json      Output as JSON (status only)
 
 ${bold("EXAMPLES")}
   chromatic router status
+  chromatic router status --json
   chromatic router redeploy
   chromatic router destroy
   chromatic router logs
@@ -64,7 +66,7 @@ ${bold("EXAMPLES")}
 
   switch (subcommand) {
     case "status":
-      await routerStatus();
+      await routerStatus(args.json);
       break;
     case "redeploy":
       await routerRedeploy();
@@ -84,7 +86,7 @@ ${bold("EXAMPLES")}
 // Router Status
 // =============================================================================
 
-const routerStatus = async (): Promise<void> => {
+const routerStatus = async (jsonMode: boolean): Promise<void> => {
   const config = await loadConfig();
 
   if (!config?.router) {
@@ -94,50 +96,59 @@ const routerStatus = async (): Promise<void> => {
   const fly = createFlyProvider();
   const tailscale = createTailscaleProvider(config.tailscale.tailnet, config.tailscale.apiKey);
 
-  console.log();
-  console.log(bold("Router Status"));
-  console.log();
-
-  // Check Fly app
   const appExists = await fly.appExists(config.router.appName);
-  if (appExists) {
-    statusOk(`Fly App: ${config.router.appName}`);
-  } else {
-    statusWarn(`Fly App: ${config.router.appName} (not found)`);
-  }
+  const machines = appExists ? await fly.listMachines(config.router.appName) : [];
+  const device = await tailscale.getDeviceByHostname(config.router.appName);
 
-  // Check machines
+  const out = createOutput(jsonMode, {
+    appName: config.router.appName,
+    appExists,
+    machines: machines.map((m) => ({
+      id: m.id,
+      state: m.state,
+      region: m.region,
+    })),
+    tailscale: device ? {
+      ip: device.addresses[0],
+      advertisedRoutes: device.advertisedRoutes,
+      enabledRoutes: device.enabledRoutes,
+    } : null,
+  });
+
+  out.blank().header("Router Status").blank();
+
   if (appExists) {
-    const machines = await fly.listMachines(config.router.appName);
+    out.ok(`Fly App: ${config.router.appName}`);
     const running = machines.filter(m => m.state === "running").length;
     const total = machines.length;
 
     if (running > 0) {
-      console.log(`  Machines: ${green(`${running}/${total} running`)}`);
+      out.text(`  Machines: ${green(`${running}/${total} running`)}`);
     } else if (total > 0) {
-      console.log(`  Machines: ${yellow(`0/${total} running`)}`);
+      out.text(`  Machines: ${yellow(`0/${total} running`)}`);
     } else {
-      console.log(`  Machines: ${red("none")}`);
+      out.text(`  Machines: ${red("none")}`);
     }
+  } else {
+    out.warn(`Fly App: ${config.router.appName} (not found)`);
   }
 
-  // Check Tailscale device
-  const device = await tailscale.getDeviceByHostname(config.router.appName);
   if (device) {
-    statusOk(`Tailscale: ${device.addresses[0]}`);
+    out.ok(`Tailscale: ${device.addresses[0]}`);
 
     if (device.advertisedRoutes && device.advertisedRoutes.length > 0) {
-      console.log(`  Routes: ${device.advertisedRoutes.join(", ")}`);
+      out.text(`  Routes: ${device.advertisedRoutes.join(", ")}`);
     }
 
     if (device.enabledRoutes && device.enabledRoutes.length > 0) {
-      console.log(`  Enabled: ${green(device.enabledRoutes.join(", "))}`);
+      out.text(`  Enabled: ${green(device.enabledRoutes.join(", "))}`);
     }
   } else {
-    statusWarn("Tailscale: Device Not Found");
+    out.warn("Tailscale: Device Not Found");
   }
 
-  console.log();
+  out.blank();
+  out.print();
 };
 
 // =============================================================================
@@ -197,11 +208,12 @@ const routerRedeploy = async (): Promise<void> => {
 
   // Clean up stale router devices from previous deployments
   const devices = await tailscale.listDevices();
+  const routerAppName = config.router.appName;
   const staleDevices = devices.filter(
     (d) =>
       d.id !== device.id &&
-      (d.hostname === config.router.appName ||
-        d.hostname.startsWith(config.router.appName + "-"))
+      (d.hostname === routerAppName ||
+        d.hostname.startsWith(routerAppName + "-"))
   );
 
   if (staleDevices.length > 0) {

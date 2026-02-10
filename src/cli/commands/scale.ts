@@ -4,13 +4,13 @@
 
 import { parseArgs } from "@std/cli";
 import {
-  statusOk,
   bold,
   confirm,
   die,
   green,
   red,
 } from "../../../lib/cli.ts";
+import { createOutput } from "../../../lib/output.ts";
 import { registerCommand } from "../mod.ts";
 import { requireRouter, type MachineSize } from "../../schemas/config.ts";
 import {
@@ -31,13 +31,13 @@ import {
 const scale = async (argv: string[]): Promise<void> => {
   const args = parseArgs(argv, {
     string: ["shared-cpu-1x", "shared-cpu-2x", "shared-cpu-4x"],
-    boolean: ["help", "yes"],
+    boolean: ["help", "yes", "json"],
     alias: { y: "yes" },
   });
 
   if (args.help) {
     console.log(`
-${bold("chromatic scale")} - Declaratively Scale Machines
+${bold("chromatic scale")} - Scale Machines in a Browser Group
 
 ${bold("USAGE")}
   chromatic scale <name> [options]
@@ -48,14 +48,18 @@ ${bold("OPTIONS")}
   --shared-cpu-2x <n>   Number of 2x machines
   --shared-cpu-4x <n>   Number of 4x machines
   -y, --yes             Skip confirmation
+  --json                Output as JSON
 
 ${bold("DESCRIPTION")}
-  Specify desired state. Chromatic will create or destroy machines as needed.
+  Add or remove machines in a browser group. Each machine runs an independent
+  Chrome instance. Connections to the group's CDP endpoint are load-balanced
+  across all machines, so this is for stateless workloads where each session
+  is independent.
 
 ${bold("EXAMPLES")}
   chromatic scale scrapers 5
   chromatic scale scrapers --shared-cpu-1x 3 --shared-cpu-2x 2
-  chromatic scale scrapers --shared-cpu-4x 2
+  chromatic scale scrapers --shared-cpu-4x 2 --json
 `);
     return;
   }
@@ -139,13 +143,6 @@ ${bold("EXAMPLES")}
     desiredSummary["shared-cpu-2x"] +
     desiredSummary["shared-cpu-4x"];
 
-  console.log();
-  console.log(bold(`Scaling: ${name}`));
-  console.log();
-  console.log(`Current:  ${formatMachineSizeSummary(currentSummary)} (${totalCurrent} total)`);
-  console.log(`Desired:  ${formatMachineSizeSummary(desiredSummary)} (${totalDesired} total)`);
-  console.log();
-
   // Compute changes
   const toCreate: { size: MachineSize; count: number }[] = [];
   const toDestroy: { size: MachineSize; count: number }[] = [];
@@ -160,21 +157,39 @@ ${bold("EXAMPLES")}
   }
 
   if (toCreate.length === 0 && toDestroy.length === 0) {
-    statusOk("Already at Desired Scale");
+    const out = createOutput(args.json, { name, changed: false, current: currentSummary });
+    out.ok("Already at Desired Scale");
+    out.print();
     return;
   }
 
-  console.log("Changes:");
+  const out = createOutput(args.json, {
+    name,
+    changed: true,
+    previous: currentSummary,
+    current: desiredSummary,
+    created: toCreate,
+    destroyed: toDestroy,
+  });
+
+  out.blank()
+    .header(`Scaling: ${name}`)
+    .blank()
+    .text(`Current:  ${formatMachineSizeSummary(currentSummary)} (${totalCurrent} total)`)
+    .text(`Desired:  ${formatMachineSizeSummary(desiredSummary)} (${totalDesired} total)`)
+    .blank()
+    .text("Changes:");
+
   for (const { size, count } of toCreate) {
-    console.log(green(`  + ${count}x ${size}`));
+    out.text(green(`  + ${count}x ${size}`));
   }
   for (const { size, count } of toDestroy) {
-    console.log(red(`  - ${count}x ${size}`));
+    out.text(red(`  - ${count}x ${size}`));
   }
-  console.log();
+  out.blank();
 
   // Confirm if destroying
-  if (toDestroy.length > 0 && !args.yes) {
+  if (toDestroy.length > 0 && !args.yes && !out.isJson()) {
     const shouldProceed = await confirm("Apply Changes?");
     if (!shouldProceed) {
       console.log("Cancelled.");
@@ -204,8 +219,8 @@ ${bold("EXAMPLES")}
     }
   }
 
-  console.log();
-  statusOk("Scaling Complete");
+  out.blank().ok("Scaling Complete");
+  out.print();
 };
 
 // =============================================================================
@@ -214,7 +229,7 @@ ${bold("EXAMPLES")}
 
 registerCommand({
   name: "scale",
-  description: "Add or remove machines in a browser instance",
+  description: "Add or remove machines in a browser group",
   usage: "chromatic scale <name> [count] [--shared-cpu-Nx N]",
   run: scale,
 });
